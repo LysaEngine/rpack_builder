@@ -36,69 +36,58 @@ struct Entry {
 };
 #pragma pack(pop)
 
-static std::vector<std::string> readFileList(const std::filesystem::path& listPath)
+std::vector<std::string> readFileList(const std::filesystem::path& listPath)
 {
     std::ifstream in(listPath);
-    if (!in)
-        throw std::runtime_error("Cannot open file list: " + listPath.string());
+    if (!in) throw std::runtime_error("Cannot open file list: " + listPath.string());
 
     std::vector<std::string> lines;
     std::string line;
     while (std::getline(in, line)) {
         // strip trailing \r (Windows line endings)
-        if (!line.empty() && line.back() == '\r')
-            line.pop_back();
-
-        if (line.empty() || line[0] == '#')
-            continue;
-
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty() || line[0] == '#') continue;
         lines.push_back(line);
     }
     return lines;
 }
 
-static void buildPack(
-    const std::filesystem::path&        outputPath,
-    const std::vector<std::string>&     resourcePaths,
-    const std::filesystem::path&        baseDir,
-    bool                                verbose)
-{
+void buildPack(
+    const std::filesystem::path& outputPath,
+    const std::vector<std::string>& resourcePaths,
+    const std::filesystem::path& baseDir,
+    bool verbose) {
     const size_t count = resourcePaths.size();
 
     // Validate paths & collect file sizes
     struct FileInfo {
         std::filesystem::path diskPath;
-        uint64                size;
+        uint64 size;
     };
 
     std::vector<FileInfo> files;
     files.reserve(count);
 
     for (const auto& rp : resourcePaths) {
-        if (rp.size() >= PATH_SIZE)
-            throw std::runtime_error("Path too long (>= 256 chars): " + rp);
+        if (rp.size() >= PATH_SIZE) throw std::runtime_error("Path too long (>= 256 chars): " + rp);
 
         std::filesystem::path disk = baseDir / rp;
-        if (!std::filesystem::exists(disk))
-            throw std::runtime_error("File not found: " + disk.string());
+        if (!std::filesystem::exists(disk)) throw std::runtime_error("File not found: " + disk.string());
 
         auto sz = std::filesystem::file_size(disk);
-        files.push_back({ std::move(disk), static_cast<uint64>(sz) });
+        files.push_back({ std::move(disk), (sz) });
 
-        if (verbose)
-            std::cout << "  + " << rp << "  (" << sz << " bytes)\n";
+        if (verbose) std::cout << "  + " << rp << "  (" << sz << " bytes)\n";
     }
 
     // Compute data-blob offsets
-    const uint64 blobStart =
-        sizeof(Header) +
-        static_cast<uint64>(count) * sizeof(Entry);
+    const uint64 blobStart = sizeof(Header) + static_cast<uint64>(count) * sizeof(Entry);
 
     std::vector<uint64> offsets(count);
     uint64 cursor = 0;
     for (size_t i = 0; i < count; ++i) {
         offsets[i] = cursor;
-        cursor    += files[i].size;
+        cursor += files[i].size;
     }
 
     // Build directory
@@ -108,13 +97,12 @@ static void buildPack(
         std::memset(&e, 0, sizeof(e));
         std::strncpy(e.path, resourcePaths[i].c_str(), PATH_SIZE - 1);
         e.offset = blobStart + offsets[i];
-        e.size   = files[i].size;
+        e.size = files[i].size;
     }
 
     // Write the output file
     std::ofstream out(outputPath, std::ios::binary | std::ios::trunc);
-    if (!out)
-        throw std::runtime_error("Cannot open output file: " + outputPath.string());
+    if (!out) throw std::runtime_error("Cannot open output file: " + outputPath.string());
 
     // Header
     Header hdr{};
@@ -124,8 +112,9 @@ static void buildPack(
     out.write(reinterpret_cast<const char*>(&hdr), sizeof(hdr));
 
     // Directory
-    for (const auto& e : directory)
+    for (const auto& e : directory) {
         out.write(reinterpret_cast<const char*>(&e), sizeof(e));
+    }
 
     // Data blob — stream each resource file
     constexpr size_t BUF_SIZE = 1024 * 1024; // 1 MiB copy buffer
@@ -133,30 +122,26 @@ static void buildPack(
 
     for (size_t i = 0; i < count; ++i) {
         std::ifstream src(files[i].diskPath, std::ios::binary);
-        if (!src)
-            throw std::runtime_error("Cannot read: " + files[i].diskPath.string());
+        if (!src) throw std::runtime_error("Cannot read: " + files[i].diskPath.string());
 
         uint64 remaining = files[i].size;
         while (remaining > 0) {
-            size_t chunk = static_cast<size_t>(
-                std::min(remaining, static_cast<uint64>(BUF_SIZE)));
+            size_t chunk = std::min(remaining, static_cast<uint64>(BUF_SIZE));
             src.read(buf.data(), static_cast<std::streamsize>(chunk));
             auto read = static_cast<size_t>(src.gcount());
-            if (read == 0)
-                throw std::runtime_error("Unexpected EOF: " + files[i].diskPath.string());
+            if (read == 0) throw std::runtime_error("Unexpected EOF: " + files[i].diskPath.string());
             out.write(buf.data(), static_cast<std::streamsize>(read));
             remaining -= read;
         }
     }
 
-    if (!out)
-        throw std::runtime_error("Write error on: " + outputPath.string());
+    if (!out) throw std::runtime_error("Write error on: " + outputPath.string());
 
-    uint64 totalSize = static_cast<uint64>(out.tellp());
+    uint64 totalSize = out.tellp();
     out.close();
 
     if (verbose) {
-        auto formatSize = [](uint64 bytes) -> std::string {
+        auto formatSize = [](const uint64 bytes) -> std::string {
             constexpr double KB = 1024.0;
             constexpr double MB = 1024.0 * 1024.0;
             constexpr double GB = 1024.0 * 1024.0 * 1024.0;
@@ -180,7 +165,7 @@ static void buildPack(
     }
 }
 
-int main(int argc, char* argv[])
+int main(const int argc, char* argv[])
 {
     cxxopts::Options options("rpack_builder", "Build a binary resources pack");
 
@@ -219,10 +204,10 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    const std::filesystem::path outputPath  = result["output"].as<std::string>();
-    const std::filesystem::path listPath    = result["list"].as<std::string>();
-    const std::filesystem::path baseDir     = result["base"].as<std::string>();
-    const bool                  verbose     = result["verbose"].as<bool>();
+    const std::filesystem::path outputPath = result["output"].as<std::string>();
+    const std::filesystem::path listPath = result["list"].as<std::string>();
+    const std::filesystem::path baseDir = result["base"].as<std::string>();
+    const bool verbose = result["verbose"].as<bool>();
 
     try {
         if (verbose) {
@@ -232,11 +217,9 @@ int main(int argc, char* argv[])
         }
 
         const auto resourcePaths = readFileList(listPath);
-        if (resourcePaths.empty())
-            throw std::runtime_error("File list is empty: " + listPath.string());
+        if (resourcePaths.empty()) throw std::runtime_error("File list is empty: " + listPath.string());
 
-        if (verbose)
-            std::cout << "Adding " << resourcePaths.size() << " resource(s):\n";
+        if (verbose) std::cout << "Adding " << resourcePaths.size() << " resource(s):\n";
 
         buildPack(outputPath, resourcePaths, baseDir, verbose);
 
